@@ -389,6 +389,8 @@ data:
           ("platform.source", "$.source"),
           ("platform.severity", "$.severity"),
           ("platform.priority", "$.priority"),
+          ("platform.subject", "$.subject"),
+          ("platform.body", "$.body"),
           ("platform.organization_id", "$.organization_id"),
           ("platform.app_id", "$.app_id"),
           ("platform.template_key", "$.template_key"),
@@ -404,9 +406,9 @@ data:
         [
           ("Authorization", f"Bearer {read_flow_secret('platform_notification_service_token')}"),
           ("platform.notification_execution_enabled", "true" if EXECUTION_ENABLED else "false"),
-          ("platform.delivery_channel", "${platform.requested_channel:orElse('in_app')}"),
-          ("platform.delivery_provider_key", "dry-run:${platform.requested_channel:orElse('in_app')}"),
-          ("platform.delivery_recipient_json", "${platform.requested_recipient_json:orElse('{\"type\":\"topic\",\"id\":\"platform.notification\"}')}"),
+          ("platform.delivery_channel", "${platform.requested_channel}"),
+          ("platform.delivery_provider_key", "web-push:${platform.requested_channel}"),
+          ("platform.delivery_recipient_json", "${platform.requested_recipient_json}"),
         ],
       )
       build_processing = configure_processor(
@@ -445,7 +447,7 @@ data:
           (["Replacement Strategy"], "Always Replace"),
           (
             ["Replacement Value"],
-            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient\":${platform.delivery_recipient_json},\"message\":{\"title\":\"${platform.event_key:escapeJson()}\",\"body\":\"Notification request ${platform.notification_request_id:escapeJson()} was processed by the placeholder NiFi flow.\",\"data\":{\"notification_request_id\":\"${platform.notification_request_id:escapeJson()}\",\"severity\":\"${platform.severity:escapeJson()}\",\"priority\":\"${platform.priority:escapeJson()}\"}},\"options\":{},\"metadata\":{\"source\":\"nifi-platform-notification-flow\",\"correlation_id\":\"${platform.correlation_id:escapeJson()}\"}}",
+            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient\":${platform.delivery_recipient_json},\"message\":{\"title\":\"${platform.subject:escapeJson()}\",\"body\":\"${platform.body:escapeJson()}\",\"data\":{\"notification_request_id\":\"${platform.notification_request_id:escapeJson()}\",\"event_key\":\"${platform.event_key:escapeJson()}\",\"severity\":\"${platform.severity:escapeJson()}\",\"priority\":\"${platform.priority:escapeJson()}\",\"app_id\":\"${platform.app_id:escapeJson()}\"}},\"options\":{\"tag\":\"platform-notification-${platform.notification_request_id:escapeJson()}\",\"ttl_seconds\":3600,\"urgency\":\"normal\"},\"metadata\":{\"source\":\"nifi-platform-notification-flow\",\"correlation_id\":\"${platform.correlation_id:escapeJson()}\",\"event_key\":\"${platform.event_key:escapeJson()}\"}}",
           ),
           (["Evaluation Mode"], "Entire text"),
         ],
@@ -469,7 +471,7 @@ data:
           (["Replacement Strategy"], "Always Replace"),
           (
             ["Replacement Value"],
-            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient_json\":${platform.delivery_recipient_json},\"message_json\":{\"title\":\"${platform.event_key:escapeJson()}\"},\"status\":\"sent\",\"response_json\":{\"executor_status_code\":\"${invokehttp.status.code:escapeJson()}\",\"placeholder\":true}}",
+            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient_json\":${platform.delivery_recipient_json},\"message_json\":{\"title\":\"${platform.subject:escapeJson()}\",\"body\":\"${platform.body:escapeJson()}\"},\"status\":\"sent\",\"response_json\":{\"executor_status_code\":\"${invokehttp.status.code:escapeJson()}\",\"delivered_by\":\"platform-notification-executor\"}}",
           ),
           (["Evaluation Mode"], "Entire text"),
         ],
@@ -491,7 +493,7 @@ data:
         build_success,
         [
           (["Replacement Strategy"], "Always Replace"),
-          (["Replacement Value"], "{\"status\":\"sent\",\"message\":\"Notification request completed through the placeholder NiFi flow.\",\"result_json\":{\"completed_by\":\"nifi-platform-notification-flow\",\"placeholder\":true}}"),
+          (["Replacement Value"], "{\"status\":\"sent\",\"message\":\"Notification request was delivered by the platform notification flow.\",\"result_json\":{\"completed_by\":\"nifi-platform-notification-flow\",\"executor_status_code\":\"${invokehttp.status.code:escapeJson()}\"}}"),
           (["Evaluation Mode"], "Entire text"),
         ],
       )
@@ -546,6 +548,7 @@ data:
       ensure_connection(process_group_id, "notification-extract-failure-to-dlq", extract_metadata["id"], dlq["id"], ["failure", "unmatched"])
       ensure_connection(process_group_id, "notification-auth-to-processing-body", set_auth["id"], build_processing["id"], ["success"])
       ensure_connection(process_group_id, "notification-processing-body-to-status", build_processing["id"], mark_processing["id"], ["success"])
+      ensure_connection(process_group_id, "notification-processing-body-failure-to-failure-body", build_processing["id"], build_failure["id"], ["failure"])
       ensure_connection(process_group_id, "notification-processing-failure-to-failure-body", mark_processing["id"], build_failure["id"], ["Failure", "No Retry", "Retry"])
       ensure_connection(process_group_id, "notification-processing-to-rules", mark_processing["id"], resolve_rules["id"], ["Original"])
       ensure_connection(process_group_id, "notification-rules-to-render", resolve_rules["id"], render_message["id"], ["success"])
@@ -554,6 +557,7 @@ data:
       ensure_connection(process_group_id, "notification-delivery-to-attempt-body", invoke_delivery["id"], build_attempt["id"], ["Original"])
       ensure_connection(process_group_id, "notification-delivery-failure-to-failure-body", invoke_delivery["id"], build_failure["id"], ["Failure", "No Retry", "Retry"])
       ensure_connection(process_group_id, "notification-attempt-body-to-record", build_attempt["id"], record_attempt["id"], ["success"])
+      ensure_connection(process_group_id, "notification-attempt-body-failure-to-failure-body", build_attempt["id"], build_failure["id"], ["failure"])
       ensure_connection(process_group_id, "notification-record-to-success-body", record_attempt["id"], build_success["id"], ["Original"])
       ensure_connection(process_group_id, "notification-record-failure-to-failure-body", record_attempt["id"], build_failure["id"], ["Failure", "No Retry", "Retry"])
       ensure_connection(process_group_id, "notification-success-body-to-finish", build_success["id"], finish_sent["id"], ["success"])
