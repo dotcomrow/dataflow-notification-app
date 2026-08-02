@@ -7,6 +7,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "50"
 data:
   kafka_bootstrap_servers: "kafka.kafka.svc.internal.lan:9092"
+  kafka_acl_bootstrap_servers: "kafka-0.kafka-hs.kafka.svc.internal.lan:9094"
   kafka_security_protocol: "SASL_PLAINTEXT"
   kafka_sasl_mechanism: "SCRAM-SHA-256"
   request_topic: "platform.notifications.requested.v1"
@@ -71,6 +72,11 @@ spec:
                 configMapKeyRef:
                   name: platform-notification-flow-config
                   key: kafka_bootstrap_servers
+            - name: KAFKA_ACL_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-notification-flow-config
+                  key: kafka_acl_bootstrap_servers
             - name: KAFKA_SECURITY_PROTOCOL
               valueFrom:
                 configMapKeyRef:
@@ -155,19 +161,31 @@ spec:
                 local principal="$1"
                 shift
                 /opt/kafka/bin/kafka-acls.sh \
-                  --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
-                  --command-config "${CLIENT_CFG}" \
+                  --bootstrap-server "${KAFKA_ACL_BOOTSTRAP_SERVERS}" \
                   --add \
                   --allow-principal "User:${principal}" \
                   "$@"
               }
 
+              require_acl() {
+                local principal="$1"
+                local operation="$2"
+                shift 2
+                if ! /opt/kafka/bin/kafka-acls.sh \
+                  --bootstrap-server "${KAFKA_ACL_BOOTSTRAP_SERVERS}" \
+                  --list \
+                  "$@" \
+                  | grep -F "principal=User:${principal}" \
+                  | grep -Fq "operation=${operation}"; then
+                  echo "Missing Kafka ACL operation ${operation} for resource: $*"
+                  exit 1
+                fi
+              }
+
               add_acl "${KAFKA_NIFI_USERNAME}" \
-                --topic "${PLATFORM_NOTIFICATION_REQUEST_TOPIC}" \
+                --topic "platform.notifications." \
+                --resource-pattern-type prefixed \
                 --operation Read \
-                --operation Describe
-              add_acl "${KAFKA_NIFI_USERNAME}" \
-                --topic "${PLATFORM_NOTIFICATION_DLQ_TOPIC}" \
                 --operation Write \
                 --operation Describe \
                 --operation Create
@@ -178,5 +196,24 @@ spec:
               add_acl "${KAFKA_NIFI_USERNAME}" \
                 --cluster \
                 --operation Describe
+
+              require_acl "${KAFKA_NIFI_USERNAME}" READ \
+                --topic "platform.notifications." \
+                --resource-pattern-type prefixed
+              require_acl "${KAFKA_NIFI_USERNAME}" WRITE \
+                --topic "platform.notifications." \
+                --resource-pattern-type prefixed
+              require_acl "${KAFKA_NIFI_USERNAME}" DESCRIBE \
+                --topic "platform.notifications." \
+                --resource-pattern-type prefixed
+              require_acl "${KAFKA_NIFI_USERNAME}" CREATE \
+                --topic "platform.notifications." \
+                --resource-pattern-type prefixed
+              require_acl "${KAFKA_NIFI_USERNAME}" READ \
+                --group "${PLATFORM_NOTIFICATION_CONSUMER_GROUP}"
+              require_acl "${KAFKA_NIFI_USERNAME}" DESCRIBE \
+                --group "${PLATFORM_NOTIFICATION_CONSUMER_GROUP}"
+              require_acl "${KAFKA_NIFI_USERNAME}" DESCRIBE \
+                --cluster
 
               echo "Platform notification topics and ACLs are ready."
