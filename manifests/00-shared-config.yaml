@@ -8,6 +8,7 @@ metadata:
 data:
   kafka_bootstrap_servers: "kafka.kafka.svc.internal.lan:9092"
   kafka_acl_bootstrap_servers: "kafka-0.kafka-hs.kafka.svc.internal.lan:9094"
+  kafka_cli_timeout: "75s"
   kafka_security_protocol: "SASL_PLAINTEXT"
   kafka_sasl_mechanism: "SCRAM-SHA-256"
   request_topic: "platform.notifications.requested.v1"
@@ -77,6 +78,11 @@ spec:
                 configMapKeyRef:
                   name: platform-notification-flow-config
                   key: kafka_acl_bootstrap_servers
+            - name: KAFKA_CLI_TIMEOUT
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-notification-flow-config
+                  key: kafka_cli_timeout
             - name: KAFKA_SECURITY_PROTOCOL
               valueFrom:
                 configMapKeyRef:
@@ -129,25 +135,30 @@ spec:
               sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="${KAFKA_ADMIN_USERNAME}" password="${KAFKA_ADMIN_PASSWORD}";
               EOF_KAFKA
 
-              until /opt/kafka/bin/kafka-topics.sh \
-                --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
-                --command-config "${CLIENT_CFG}" \
-                --list >/dev/null 2>&1; do
+              kafka_topics() {
+                timeout "${KAFKA_CLI_TIMEOUT}" /opt/kafka/bin/kafka-topics.sh \
+                  --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
+                  --command-config "${CLIENT_CFG}" \
+                  "$@"
+              }
+
+              kafka_acls() {
+                timeout "${KAFKA_CLI_TIMEOUT}" /opt/kafka/bin/kafka-acls.sh \
+                  --bootstrap-server "${KAFKA_ACL_BOOTSTRAP_SERVERS}" \
+                  "$@"
+              }
+
+              until kafka_topics --list >/dev/null 2>&1; do
                 sleep 5
               done
 
               ensure_topic() {
                 local topic="$1"
-                if /opt/kafka/bin/kafka-topics.sh \
-                  --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
-                  --command-config "${CLIENT_CFG}" \
-                  --list | grep -qx "${topic}"; then
+                if kafka_topics --list | grep -qx "${topic}"; then
                   echo "Topic already exists: ${topic}"
                   return
                 fi
-                /opt/kafka/bin/kafka-topics.sh \
-                  --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
-                  --command-config "${CLIENT_CFG}" \
+                kafka_topics \
                   --create \
                   --topic "${topic}" \
                   --partitions 3 \
@@ -160,8 +171,7 @@ spec:
               add_acl() {
                 local principal="$1"
                 shift
-                /opt/kafka/bin/kafka-acls.sh \
-                  --bootstrap-server "${KAFKA_ACL_BOOTSTRAP_SERVERS}" \
+                kafka_acls \
                   --add \
                   --allow-principal "User:${principal}" \
                   "$@"
@@ -172,10 +182,11 @@ spec:
                 local operation="$2"
                 local acl_output=""
                 shift 2
-                acl_output="$(/opt/kafka/bin/kafka-acls.sh \
-                  --bootstrap-server "${KAFKA_ACL_BOOTSTRAP_SERVERS}" \
-                  --list \
-                  "$@" 2>&1)"
+                if ! acl_output="$(kafka_acls --list "$@" 2>&1)"; then
+                  printf '%s\n' "${acl_output}"
+                  echo "Failed listing Kafka ACLs for resource: $*"
+                  exit 1
+                fi
                 if ! printf '%s\n' "${acl_output}" \
                   | grep -F "principal=User:${principal}" \
                   | grep -Fq "operation=${operation}"; then
