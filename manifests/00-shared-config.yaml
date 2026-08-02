@@ -14,7 +14,7 @@ data:
   consumer_group: "nifi-platform-notifications-requested-v1"
   platform_notification_service_url: "http://platform-notification-service.directus.svc.cluster.local:8080"
   platform_notification_executor_url: "http://platform-notification-executor.directus.svc.cluster.local:8080"
-  execution_enabled: "false"
+  execution_enabled: "true"
 ---
 apiVersion: v1
 kind: Secret

@@ -49,7 +49,7 @@ spec:
     - name: platform.notification.executor.url
       value: http://platform-notification-executor.directus.svc.cluster.local:8080
     - name: platform.notification.execution.enabled
-      value: "false"
+      value: "true"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -242,4 +242,50 @@ spec:
                 exit 1
               fi
 
-              echo "Platform notification Registry flow is present."
+              code="$(check_http GET "${NIFI_REGISTRY_API}/buckets/${NIFI_REGISTRY_BUCKET_ID}/flows/${NIFI_REGISTRY_FLOW_ID}/versions/1")"
+              if [ "${code}" = "200" ]; then
+                echo "Flow version 1 already exists; nothing to do."
+                exit 0
+              fi
+              if [ "${code}" != "404" ]; then
+                echo "Unexpected response checking flow version 1: HTTP ${code}"
+                cat /tmp/resp.json || true
+                exit 1
+              fi
+
+              cat > /tmp/flow-v1.json <<EOF
+              {
+                "snapshotMetadata": {
+                  "bucketIdentifier": "${NIFI_REGISTRY_BUCKET_ID}",
+                  "flowIdentifier": "${NIFI_REGISTRY_FLOW_ID}",
+                  "version": 1
+                },
+                "flowContents": {
+                  "identifier": "root-group",
+                  "name": "${NIFI_REGISTRY_FLOW_NAME}",
+                  "comments": "Initial platform notification orchestration flow snapshot",
+                  "processGroups": [],
+                  "remoteProcessGroups": [],
+                  "processors": [],
+                  "inputPorts": [],
+                  "outputPorts": [],
+                  "connections": [],
+                  "labels": [],
+                  "funnels": []
+                }
+              }
+              EOF
+
+              code="$(check_http POST "${NIFI_REGISTRY_API}/buckets/${NIFI_REGISTRY_BUCKET_ID}/flows/${NIFI_REGISTRY_FLOW_ID}/versions" /tmp/flow-v1.json)"
+              if [ "${code}" != "200" ] && [ "${code}" != "201" ] && [ "${code}" != "409" ]; then
+                echo "Failed creating flow version 1: HTTP ${code}"
+                cat /tmp/resp.json || true
+                exit 1
+              fi
+
+              code="$(check_http GET "${NIFI_REGISTRY_API}/buckets/${NIFI_REGISTRY_BUCKET_ID}/flows/${NIFI_REGISTRY_FLOW_ID}/versions/1")"
+              if [ "${code}" != "200" ]; then
+                echo "Flow version 1 was not found after bootstrap."
+                cat /tmp/resp.json || true
+                exit 1
+              fi
