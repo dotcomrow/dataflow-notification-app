@@ -170,13 +170,16 @@ spec:
               require_acl() {
                 local principal="$1"
                 local operation="$2"
+                local acl_output=""
                 shift 2
-                if ! /opt/kafka/bin/kafka-acls.sh \
+                acl_output="$(/opt/kafka/bin/kafka-acls.sh \
                   --bootstrap-server "${KAFKA_ACL_BOOTSTRAP_SERVERS}" \
                   --list \
-                  "$@" \
+                  "$@" 2>&1)"
+                if ! printf '%s\n' "${acl_output}" \
                   | grep -F "principal=User:${principal}" \
                   | grep -Fq "operation=${operation}"; then
+                  printf '%s\n' "${acl_output}"
                   echo "Missing Kafka ACL operation ${operation} for resource: $*"
                   exit 1
                 fi
