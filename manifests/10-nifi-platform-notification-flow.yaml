@@ -1,0 +1,245 @@
+apiVersion: nifi.konpyutaika.com/v2alpha1
+kind: NifiRegistryClient
+metadata:
+  name: platform-notification-flow-registry
+  namespace: dataflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "62"
+spec:
+  clusterRef:
+    name: nifi-external
+    namespace: dataflow
+  description: "Registry client for platform notification orchestration"
+  type: registry
+  registryClientConfig:
+    uri: "http://nifi-registry.dataflow.svc.cluster.local:18080"
+---
+apiVersion: nifi.konpyutaika.com/v1
+kind: NifiParameterContext
+metadata:
+  name: platform-notification-context
+  namespace: dataflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "63"
+spec:
+  description: "Parameters for platform notification orchestration"
+  clusterRef:
+    name: nifi-external
+    namespace: dataflow
+  secretRefs:
+    - name: platform-notification-kafka-credentials
+      namespace: dataflow
+    - name: platform-notification-flow-secrets
+      namespace: dataflow
+  parameters:
+    - name: platform.kafka.bootstrap.servers
+      value: kafka.kafka.svc.internal.lan:9092
+    - name: platform.kafka.security.protocol
+      value: SASL_PLAINTEXT
+    - name: platform.kafka.sasl.mechanism
+      value: SCRAM-SHA-256
+    - name: platform.notification.request.topic
+      value: platform.notifications.requested.v1
+    - name: platform.notification.dlq.topic
+      value: platform.notifications.requested.dlq.v1
+    - name: platform.notification.consumer.group
+      value: nifi-platform-notifications-requested-v1
+    - name: platform.notification.service.url
+      value: http://platform-notification-service.directus.svc.cluster.local:8080
+    - name: platform.notification.executor.url
+      value: http://platform-notification-executor.directus.svc.cluster.local:8080
+    - name: platform.notification.execution.enabled
+      value: "false"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-notification-flow-spec
+  namespace: dataflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "64"
+data:
+  flow.json: |
+    {
+      "name": "platform-notifications",
+      "processors": [
+        {
+          "name": "consume-platform-notification-requests",
+          "type": "org.apache.nifi.kafka.processors.ConsumeKafka",
+          "relationships": ["success"]
+        },
+        {
+          "name": "extract-platform-notification-metadata",
+          "type": "org.apache.nifi.processors.standard.EvaluateJsonPath",
+          "relationships": ["matched", "unmatched", "failure"]
+        },
+        {
+          "name": "set-platform-notification-authorization",
+          "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+          "relationships": ["success"]
+        },
+        {
+          "name": "mark-platform-notification-processing",
+          "type": "org.apache.nifi.processors.standard.InvokeHTTP",
+          "url": "#{platform.notification.service.url}/internal/notifications/${platform.notification_request_id}/status",
+          "relationships": ["Response", "Failure", "Retry", "No Retry", "Original"]
+        },
+        {
+          "name": "resolve-platform-notification-rules",
+          "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+          "relationships": ["success"]
+        },
+        {
+          "name": "render-platform-notification-message",
+          "type": "org.apache.nifi.processors.standard.ReplaceText",
+          "relationships": ["success", "failure"]
+        },
+        {
+          "name": "invoke-platform-notification-delivery",
+          "type": "org.apache.nifi.processors.standard.InvokeHTTP",
+          "url": "#{platform.notification.executor.url}/internal/notifications/${platform.notification_request_id}/deliveries",
+          "relationships": ["Response", "Failure", "Retry", "No Retry", "Original"]
+        },
+        {
+          "name": "record-platform-notification-delivery-attempt",
+          "type": "org.apache.nifi.processors.standard.InvokeHTTP",
+          "url": "#{platform.notification.service.url}/internal/notifications/${platform.notification_request_id}/delivery-attempts",
+          "relationships": ["Response", "Failure", "Retry", "No Retry", "Original"]
+        },
+        {
+          "name": "build-platform-notification-success-callback",
+          "type": "org.apache.nifi.processors.standard.ReplaceText",
+          "relationships": ["success", "failure"]
+        },
+        {
+          "name": "finish-platform-notification-sent",
+          "type": "org.apache.nifi.processors.standard.InvokeHTTP",
+          "url": "#{platform.notification.service.url}/internal/notifications/${platform.notification_request_id}/status",
+          "relationships": ["Response", "Failure", "Retry", "No Retry", "Original"]
+        },
+        {
+          "name": "build-platform-notification-failure-callback",
+          "type": "org.apache.nifi.processors.standard.ReplaceText",
+          "relationships": ["success", "failure"]
+        },
+        {
+          "name": "finish-platform-notification-failed",
+          "type": "org.apache.nifi.processors.standard.InvokeHTTP",
+          "url": "#{platform.notification.service.url}/internal/notifications/${platform.notification_request_id}/status",
+          "relationships": ["Response", "Failure", "Retry", "No Retry", "Original"]
+        },
+        {
+          "name": "publish-platform-notification-dlq",
+          "type": "org.apache.nifi.kafka.processors.PublishKafka",
+          "topic": "#{platform.notification.dlq.topic}",
+          "relationships": ["success", "failure"]
+        }
+      ]
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: platform-notification-nifi-registry-bootstrap
+  namespace: dataflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "65"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-options: Replace=true
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: platform-notification-nifi-registry-bootstrap
+      annotations:
+        linkerd.io/inject: "disabled"
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap-registry-flow
+          image: curlimages/curl:8.12.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NIFI_REGISTRY_API
+              value: "http://nifi-registry.dataflow.svc.cluster.local:18080/nifi-registry-api"
+            - name: NIFI_REGISTRY_BUCKET_ID
+              value: "<path:secret/data/k8s-kafka-nifi-registry-bucket-id#value>"
+            - name: NIFI_REGISTRY_FLOW_ID
+              value: "9e6c0f08-967d-4f31-8355-6ec6e5fd8c7b"
+            - name: NIFI_REGISTRY_FLOW_NAME
+              value: "platform-notifications"
+          command: ["/bin/sh", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+
+              check_http() {
+                local method="$1"
+                local url="$2"
+                local body_file="${3:-}"
+                local status=""
+                if [ -n "${body_file}" ]; then
+                  status="$(curl -sS -o /tmp/resp.json -w "%{http_code}" -X "${method}" \
+                    -H "Content-Type: application/json" "${url}" --data @"${body_file}" || true)"
+                else
+                  status="$(curl -sS -o /tmp/resp.json -w "%{http_code}" -X "${method}" "${url}" || true)"
+                fi
+                echo "${status}"
+              }
+
+              echo "Waiting for NiFi Registry API..."
+              ready="false"
+              for _ in $(seq 1 120); do
+                code="$(check_http GET "${NIFI_REGISTRY_API}/buckets")"
+                if [ "${code}" = "200" ]; then
+                  ready="true"
+                  break
+                fi
+                sleep 2
+              done
+              if [ "${ready}" != "true" ]; then
+                echo "NiFi Registry API is not ready."
+                cat /tmp/resp.json || true
+                exit 1
+              fi
+
+              code="$(check_http GET "${NIFI_REGISTRY_API}/buckets/${NIFI_REGISTRY_BUCKET_ID}")"
+              if [ "${code}" != "200" ]; then
+                echo "Registry bucket id not found: ${NIFI_REGISTRY_BUCKET_ID}"
+                cat /tmp/resp.json || true
+                exit 1
+              fi
+
+              code="$(check_http GET "${NIFI_REGISTRY_API}/buckets/${NIFI_REGISTRY_BUCKET_ID}/flows/${NIFI_REGISTRY_FLOW_ID}")"
+              if [ "${code}" = "404" ]; then
+                cat > /tmp/flow.json <<EOF
+              {
+                "identifier": "${NIFI_REGISTRY_FLOW_ID}",
+                "bucketIdentifier": "${NIFI_REGISTRY_BUCKET_ID}",
+                "name": "${NIFI_REGISTRY_FLOW_NAME}",
+                "description": "Platform notification orchestration flow"
+              }
+              EOF
+                code="$(check_http POST "${NIFI_REGISTRY_API}/buckets/${NIFI_REGISTRY_BUCKET_ID}/flows" /tmp/flow.json)"
+                if [ "${code}" != "200" ] && [ "${code}" != "201" ] && [ "${code}" != "409" ]; then
+                  echo "Failed creating Registry flow: HTTP ${code}"
+                  cat /tmp/resp.json || true
+                  exit 1
+                fi
+              elif [ "${code}" != "200" ]; then
+                echo "Unexpected response checking Registry flow: HTTP ${code}"
+                cat /tmp/resp.json || true
+                exit 1
+              fi
+
+              code="$(check_http GET "${NIFI_REGISTRY_API}/buckets/${NIFI_REGISTRY_BUCKET_ID}/flows/${NIFI_REGISTRY_FLOW_ID}")"
+              if [ "${code}" != "200" ]; then
+                echo "Registry flow was not found after bootstrap: ${NIFI_REGISTRY_FLOW_ID}"
+                cat /tmp/resp.json || true
+                exit 1
+              fi
+
+              echo "Platform notification Registry flow is present."

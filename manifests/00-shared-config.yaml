@@ -1,0 +1,143 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-notification-flow-config
+  namespace: dataflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "50"
+data:
+  kafka_bootstrap_servers: "kafka.kafka.svc.internal.lan:9092"
+  kafka_security_protocol: "SASL_PLAINTEXT"
+  kafka_sasl_mechanism: "SCRAM-SHA-256"
+  request_topic: "platform.notifications.requested.v1"
+  dlq_topic: "platform.notifications.requested.dlq.v1"
+  consumer_group: "nifi-platform-notifications-requested-v1"
+  platform_notification_service_url: "http://platform-notification-service.directus.svc.cluster.local:8080"
+  platform_notification_executor_url: "http://platform-notification-executor.directus.svc.cluster.local:8080"
+  execution_enabled: "false"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-notification-kafka-credentials
+  namespace: dataflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "50"
+type: Opaque
+stringData:
+  admin_username: "<path:secret/data/kafka-admin-username#value>"
+  admin_password: "<path:secret/data/kafka-admin-password#value>"
+  nifi_username: "<path:secret/data/kafka-nifi-username#value>"
+  nifi_password: "<path:secret/data/kafka-nifi-password#value>"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-notification-flow-secrets
+  namespace: dataflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "50"
+type: Opaque
+stringData:
+  platform_notification_service_token: "<path:secret/data/platform-notification-service#token>"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: platform-notification-kafka-topics
+  namespace: dataflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "52"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-options: Replace=true
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: platform-notification-kafka-topics
+      annotations:
+        linkerd.io/inject: "disabled"
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: topic-bootstrap
+          image: apache/kafka:3.9.0
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-notification-flow-config
+                  key: kafka_bootstrap_servers
+            - name: KAFKA_SECURITY_PROTOCOL
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-notification-flow-config
+                  key: kafka_security_protocol
+            - name: KAFKA_SASL_MECHANISM
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-notification-flow-config
+                  key: kafka_sasl_mechanism
+            - name: KAFKA_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: platform-notification-kafka-credentials
+                  key: admin_username
+            - name: KAFKA_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-notification-kafka-credentials
+                  key: admin_password
+            - name: PLATFORM_NOTIFICATION_REQUEST_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-notification-flow-config
+                  key: request_topic
+            - name: PLATFORM_NOTIFICATION_DLQ_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-notification-flow-config
+                  key: dlq_topic
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+
+              CLIENT_CFG="/tmp/kafka-admin.properties"
+              cat > "${CLIENT_CFG}" <<EOF_KAFKA
+              security.protocol=${KAFKA_SECURITY_PROTOCOL}
+              sasl.mechanism=${KAFKA_SASL_MECHANISM}
+              sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="${KAFKA_ADMIN_USERNAME}" password="${KAFKA_ADMIN_PASSWORD}";
+              EOF_KAFKA
+
+              until /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
+                --command-config "${CLIENT_CFG}" \
+                --list >/dev/null 2>&1; do
+                sleep 5
+              done
+
+              ensure_topic() {
+                local topic="$1"
+                if /opt/kafka/bin/kafka-topics.sh \
+                  --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
+                  --command-config "${CLIENT_CFG}" \
+                  --list | grep -qx "${topic}"; then
+                  echo "Topic already exists: ${topic}"
+                  return
+                fi
+                /opt/kafka/bin/kafka-topics.sh \
+                  --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
+                  --command-config "${CLIENT_CFG}" \
+                  --create \
+                  --topic "${topic}" \
+                  --partitions 3 \
+                  --replication-factor 1
+              }
+
+              ensure_topic "${PLATFORM_NOTIFICATION_REQUEST_TOPIC}"
+              ensure_topic "${PLATFORM_NOTIFICATION_DLQ_TOPIC}"
+              echo "Platform notification topics are ready."
