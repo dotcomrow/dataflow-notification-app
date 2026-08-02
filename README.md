@@ -32,6 +32,13 @@ Default topics:
 - request topic: `platform.notifications.requested.v1`
 - DLQ topic: `platform.notifications.requested.dlq.v1`
 
+Kafka access:
+
+- `platform-notification-kafka-topics` creates the request and DLQ topics and
+  grants the NiFi Kafka principal read/describe access to the request topic,
+  write/describe/create access to the DLQ topic, read/describe access to the
+  consumer group, and cluster describe access.
+
 Execution boundary:
 
 - `platform-notification-service` owns request validation, enrichment, queue

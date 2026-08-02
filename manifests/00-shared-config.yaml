@@ -91,6 +91,11 @@ spec:
                 secretKeyRef:
                   name: platform-notification-kafka-credentials
                   key: admin_password
+            - name: KAFKA_NIFI_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: platform-notification-kafka-credentials
+                  key: nifi_username
             - name: PLATFORM_NOTIFICATION_REQUEST_TOPIC
               valueFrom:
                 configMapKeyRef:
@@ -101,6 +106,11 @@ spec:
                 configMapKeyRef:
                   name: platform-notification-flow-config
                   key: dlq_topic
+            - name: PLATFORM_NOTIFICATION_CONSUMER_GROUP
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-notification-flow-config
+                  key: consumer_group
           command: ["/bin/bash", "-lc"]
           args:
             - |
@@ -140,4 +150,33 @@ spec:
 
               ensure_topic "${PLATFORM_NOTIFICATION_REQUEST_TOPIC}"
               ensure_topic "${PLATFORM_NOTIFICATION_DLQ_TOPIC}"
-              echo "Platform notification topics are ready."
+
+              add_acl() {
+                local principal="$1"
+                shift
+                /opt/kafka/bin/kafka-acls.sh \
+                  --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
+                  --command-config "${CLIENT_CFG}" \
+                  --add \
+                  --allow-principal "User:${principal}" \
+                  "$@"
+              }
+
+              add_acl "${KAFKA_NIFI_USERNAME}" \
+                --topic "${PLATFORM_NOTIFICATION_REQUEST_TOPIC}" \
+                --operation Read \
+                --operation Describe
+              add_acl "${KAFKA_NIFI_USERNAME}" \
+                --topic "${PLATFORM_NOTIFICATION_DLQ_TOPIC}" \
+                --operation Write \
+                --operation Describe \
+                --operation Create
+              add_acl "${KAFKA_NIFI_USERNAME}" \
+                --group "${PLATFORM_NOTIFICATION_CONSUMER_GROUP}" \
+                --operation Read \
+                --operation Describe
+              add_acl "${KAFKA_NIFI_USERNAME}" \
+                --cluster \
+                --operation Describe
+
+              echo "Platform notification topics and ACLs are ready."
