@@ -540,8 +540,8 @@ data:
         [
           ("Authorization", f"Bearer {read_flow_secret('platform_notification_service_token')}"),
           ("platform.notification_execution_enabled", "true" if EXECUTION_ENABLED else "false"),
-          ("platform.delivery_channel", "${platform.requested_channel}"),
-          ("platform.delivery_provider_key", "web-push:${platform.requested_channel}"),
+          ("platform.delivery_channel", "browser_push"),
+          ("platform.delivery_provider_key", "web-push:browser_push"),
           ("platform.delivery_recipient_json", "${platform.requested_recipient_json}"),
         ],
       )
@@ -612,9 +612,14 @@ data:
           ("platform.executor_ok", "$.ok"),
           ("platform.executor_status", "$.status"),
           ("platform.executor_provider_message_id", "$.provider_message_id"),
-          ("platform.executor_response_json", "$.response_json"),
+          ("platform.executor_response_provider", "$.response_json.provider"),
+          ("platform.executor_response_subscription_id", "$.response_json.subscription_id"),
+          ("platform.executor_response_endpoint_hash", "$.response_json.endpoint_hash"),
+          ("platform.executor_response_status_code", "$.response_json.status_code"),
+          ("platform.executor_response_mode", "$.response_json.mode"),
           ("platform.executor_error_message", "$.error_message"),
         ],
+        ["platform.executor_response_json"],
       )
       normalize_delivery_result = configure_processor(
         normalize_delivery_result,
@@ -624,7 +629,7 @@ data:
           ("platform.executor_http_status_code", "${invokehttp.status.code}"),
           ("platform.executor_attempt_status", "${platform.executor_status:replaceEmpty('failed')}"),
           ("platform.notification_terminal_status", "${platform.executor_status:equals('sent'):ifElse('sent','failed')}"),
-          ("platform.executor_response_payload_json", "${platform.executor_response_json:replaceEmpty('{}')}"),
+          ("platform.executor_response_payload_json", "{\"provider\":\"${platform.executor_response_provider:escapeJson()}\",\"subscription_id\":\"${platform.executor_response_subscription_id:escapeJson()}\",\"endpoint_hash\":\"${platform.executor_response_endpoint_hash:escapeJson()}\",\"status_code\":\"${platform.executor_response_status_code:escapeJson()}\",\"mode\":\"${platform.executor_response_mode:escapeJson()}\"}"),
         ],
       )
       build_attempt = configure_processor(
