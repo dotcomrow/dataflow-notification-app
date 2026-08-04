@@ -106,6 +106,21 @@ data:
           "relationships": ["Response", "Failure", "Retry", "No Retry", "Original"]
         },
         {
+          "name": "extract-platform-notification-delivery-result",
+          "type": "org.apache.nifi.processors.standard.EvaluateJsonPath",
+          "relationships": ["matched", "unmatched", "failure"]
+        },
+        {
+          "name": "normalize-platform-notification-delivery-result",
+          "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+          "relationships": ["success"]
+        },
+        {
+          "name": "build-platform-notification-delivery-attempt",
+          "type": "org.apache.nifi.processors.standard.ReplaceText",
+          "relationships": ["success", "failure"]
+        },
+        {
           "name": "record-platform-notification-delivery-attempt",
           "type": "org.apache.nifi.processors.standard.InvokeHTTP",
           "url": "#{platform.notification.service.url}/internal/notifications/${platform.notification_request_id}/delivery-attempts",

@@ -376,18 +376,20 @@ data:
       resolve_rules = ensure_processor(process_group_id, "resolve-platform-notification-rules", "org.apache.nifi.processors.attributes.UpdateAttribute", "nifi-update-attribute-nar", 1800, 0)
       render_message = ensure_processor(process_group_id, "render-platform-notification-message", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 2100, 0)
       invoke_delivery = ensure_processor(process_group_id, "invoke-platform-notification-delivery", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 2400, 0)
-      build_attempt = ensure_processor(process_group_id, "build-platform-notification-delivery-attempt", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 2700, 0)
-      record_attempt = ensure_processor(process_group_id, "record-platform-notification-delivery-attempt", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 3000, 0)
-      build_success = ensure_processor(process_group_id, "build-platform-notification-success-callback", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 3300, 0)
-      finish_sent = ensure_processor(process_group_id, "finish-platform-notification-sent", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 3600, 0)
+      extract_delivery_result = ensure_processor(process_group_id, "extract-platform-notification-delivery-result", "org.apache.nifi.processors.standard.EvaluateJsonPath", "nifi-standard-nar", 2700, 0)
+      normalize_delivery_result = ensure_processor(process_group_id, "normalize-platform-notification-delivery-result", "org.apache.nifi.processors.attributes.UpdateAttribute", "nifi-update-attribute-nar", 3000, 0)
+      build_attempt = ensure_processor(process_group_id, "build-platform-notification-delivery-attempt", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 3300, 0)
+      record_attempt = ensure_processor(process_group_id, "record-platform-notification-delivery-attempt", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 3600, 0)
+      build_success = ensure_processor(process_group_id, "build-platform-notification-success-callback", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 3900, 0)
+      finish_sent = ensure_processor(process_group_id, "finish-platform-notification-sent", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 4200, 0)
       build_failure = ensure_processor(process_group_id, "build-platform-notification-failure-callback", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 2100, 360)
       finish_failed = ensure_processor(process_group_id, "finish-platform-notification-failed", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 2400, 360)
       dlq = ensure_processor(process_group_id, "publish-platform-notification-dlq", "org.apache.nifi.kafka.processors.PublishKafka", "nifi-kafka-nar", 2700, 360)
 
       processors = [
         consume, extract_metadata, extract_recipient, set_auth, build_processing, mark_processing,
-        resolve_rules, render_message, invoke_delivery, build_attempt, record_attempt,
-        build_success, finish_sent, build_failure, finish_failed, dlq,
+        resolve_rules, render_message, invoke_delivery, extract_delivery_result, normalize_delivery_result,
+        build_attempt, record_attempt, build_success, finish_sent, build_failure, finish_failed, dlq,
       ]
       for processor in processors:
         set_processor_state(processor, "STOPPED")
@@ -520,13 +522,41 @@ data:
         ],
         ["Response"],
       )
+      extract_delivery_result = configure_processor(
+        extract_delivery_result,
+        [
+          (["Destination"], "flowfile-attribute"),
+          (["Return Type"], "auto-detect"),
+          (["Path Not Found Behavior"], "ignore"),
+          (["Null Value Representation"], "empty string"),
+        ],
+        None,
+        [
+          ("platform.executor_ok", "$.ok"),
+          ("platform.executor_status", "$.status"),
+          ("platform.executor_provider_message_id", "$.provider_message_id"),
+          ("platform.executor_response_json", "$.response_json"),
+          ("platform.executor_error_message", "$.error_message"),
+        ],
+      )
+      normalize_delivery_result = configure_processor(
+        normalize_delivery_result,
+        [],
+        None,
+        [
+          ("platform.executor_http_status_code", "${invokehttp.status.code}"),
+          ("platform.executor_attempt_status", "${platform.executor_status:replaceEmpty('failed')}"),
+          ("platform.notification_terminal_status", "${platform.executor_status:equals('sent'):ifElse('sent','failed')}"),
+          ("platform.executor_response_payload_json", "${platform.executor_response_json:replaceEmpty('{}')}"),
+        ],
+      )
       build_attempt = configure_processor(
         build_attempt,
         [
           (["Replacement Strategy"], "Always Replace"),
           (
             ["Replacement Value"],
-            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient_json\":${platform.delivery_recipient_json},\"message_json\":{\"title\":\"${platform.subject:escapeJson()}\",\"body\":\"${platform.body:escapeJson()}\"},\"status\":\"sent\",\"response_json\":{\"executor_status_code\":\"${invokehttp.status.code:escapeJson()}\",\"delivered_by\":\"platform-notification-executor\"}}",
+            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient_json\":${platform.delivery_recipient_json},\"message_json\":{\"title\":\"${platform.subject:escapeJson()}\",\"body\":\"${platform.body:escapeJson()}\"},\"status\":\"${platform.executor_attempt_status:escapeJson()}\",\"provider_message_id\":\"${platform.executor_provider_message_id:escapeJson()}\",\"response_json\":{\"executor_http_status_code\":\"${platform.executor_http_status_code:escapeJson()}\",\"executor_ok\":\"${platform.executor_ok:escapeJson()}\",\"executor_response\":${platform.executor_response_payload_json}},\"error_message\":\"${platform.executor_error_message:escapeJson()}\"}",
           ),
           (["Evaluation Mode"], "Entire text"),
         ],
@@ -548,7 +578,7 @@ data:
         build_success,
         [
           (["Replacement Strategy"], "Always Replace"),
-          (["Replacement Value"], "{\"status\":\"sent\",\"message\":\"Notification request was delivered by the platform notification flow.\",\"result_json\":{\"completed_by\":\"nifi-platform-notification-flow\",\"executor_status_code\":\"${invokehttp.status.code:escapeJson()}\"}}"),
+          (["Replacement Value"], "{\"status\":\"${platform.notification_terminal_status:escapeJson()}\",\"message\":\"Notification request delivery execution finished by the platform notification flow.\",\"result_json\":{\"completed_by\":\"nifi-platform-notification-flow\",\"executor_http_status_code\":\"${platform.executor_http_status_code:escapeJson()}\",\"executor_ok\":\"${platform.executor_ok:escapeJson()}\",\"executor_status\":\"${platform.executor_status:escapeJson()}\",\"provider_message_id\":\"${platform.executor_provider_message_id:escapeJson()}\"},\"error_message\":\"${platform.executor_error_message:escapeJson()}\"}"),
           (["Evaluation Mode"], "Entire text"),
         ],
       )
@@ -611,8 +641,11 @@ data:
       ensure_connection(process_group_id, "notification-rules-to-render", resolve_rules["id"], render_message["id"], ["success"])
       ensure_connection(process_group_id, "notification-render-to-delivery", render_message["id"], invoke_delivery["id"], ["success"])
       ensure_connection(process_group_id, "notification-render-failure-to-failure-body", render_message["id"], build_failure["id"], ["failure"])
-      ensure_connection(process_group_id, "notification-delivery-to-attempt-body", invoke_delivery["id"], build_attempt["id"], ["Original"])
+      ensure_connection(process_group_id, "notification-delivery-to-attempt-body", invoke_delivery["id"], extract_delivery_result["id"], ["Response"])
       ensure_connection(process_group_id, "notification-delivery-failure-to-failure-body", invoke_delivery["id"], build_failure["id"], ["Failure", "No Retry", "Retry"])
+      ensure_connection(process_group_id, "notification-result-extract-to-normalize", extract_delivery_result["id"], normalize_delivery_result["id"], ["matched"])
+      ensure_connection(process_group_id, "notification-result-extract-failure-to-failure-body", extract_delivery_result["id"], build_failure["id"], ["failure", "unmatched"])
+      ensure_connection(process_group_id, "notification-result-normalize-to-attempt-body", normalize_delivery_result["id"], build_attempt["id"], ["success"])
       ensure_connection(process_group_id, "notification-attempt-body-to-record", build_attempt["id"], record_attempt["id"], ["success"])
       ensure_connection(process_group_id, "notification-attempt-body-failure-to-failure-body", build_attempt["id"], build_failure["id"], ["failure"])
       ensure_connection(process_group_id, "notification-record-to-success-body", record_attempt["id"], build_success["id"], ["Original"])
@@ -634,6 +667,8 @@ data:
           build_success,
           record_attempt,
           build_attempt,
+          normalize_delivery_result,
+          extract_delivery_result,
           invoke_delivery,
           render_message,
           resolve_rules,
