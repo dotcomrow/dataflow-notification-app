@@ -230,14 +230,17 @@ data:
       config = entity["component"].get("config", {})
       descriptors = config.get("descriptors", {})
       properties = dict(config.get("properties") or {})
+      properties_to_remove = list(remove_dynamic_property_names or [])
       for candidates, value in property_specs:
         properties[descriptor_key(descriptors, candidates)] = value
-      for name in remove_dynamic_property_names or []:
+      for name in properties_to_remove:
         properties.pop(name, None)
       for name, value in dynamic_property_specs or []:
         properties[name] = value
 
       new_config = {"properties": properties}
+      if properties_to_remove:
+        new_config["propertiesToRemove"] = properties_to_remove
       if auto_terminated is not None:
         new_config["autoTerminatedRelationships"] = auto_terminated
       return api(
