@@ -234,16 +234,14 @@ data:
       for candidates, value in property_specs:
         properties[descriptor_key(descriptors, candidates)] = value
       for name in properties_to_remove:
-        properties.pop(name, None)
+        properties[name] = None
       for name, value in dynamic_property_specs or []:
         properties[name] = value
 
       new_config = {"properties": properties}
-      if properties_to_remove:
-        new_config["propertiesToRemove"] = properties_to_remove
       if auto_terminated is not None:
         new_config["autoTerminatedRelationships"] = auto_terminated
-      return api(
+      updated = api(
         "PUT",
         f"/processors/{entity['id']}",
         {
@@ -254,6 +252,13 @@ data:
           },
         },
       )
+      if properties_to_remove:
+        refreshed = api("GET", f"/processors/{entity['id']}")
+        refreshed_properties = (refreshed["component"].get("config", {}) or {}).get("properties") or {}
+        remaining = [name for name in properties_to_remove if refreshed_properties.get(name) not in (None, "")]
+        if remaining:
+          raise RuntimeError(f"Processor {entity['component'].get('name', entity['id'])} still has removed dynamic properties: {remaining}")
+      return updated
 
     def set_processor_state(entity, state):
       entity = api("GET", f"/processors/{entity['id']}")
