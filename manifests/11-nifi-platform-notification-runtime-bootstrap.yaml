@@ -547,7 +547,7 @@ data:
           (["Response Generation Required", "Always Output Response"], "true"),
           (["Socket Read Timeout"], "120 sec"),
         ],
-        ["Response"],
+        ["Original"],
       )
       extract_delivery_result = configure_processor(
         extract_delivery_result,
