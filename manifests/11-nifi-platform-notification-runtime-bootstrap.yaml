@@ -60,16 +60,54 @@ data:
         "version": entity["revision"]["version"],
       }
 
-    def active_thread_count(entity):
-      status = entity.get("status") or {}
-      aggregate = status.get("aggregateSnapshot") or {}
-      for source in (aggregate, status, entity.get("component") or {}):
+    def processor_status(entity):
+      try:
+        status_entity = api("GET", f"/flow/processors/{entity['id']}/status", timeout=20)
+        return status_entity.get("processorStatus") or status_entity.get("status") or {}
+      except RuntimeError:
+        return {}
+
+    def runtime_sources(entity, status=None):
+      entity_status = entity.get("status") or {}
+      runtime_status = status if status is not None else processor_status(entity)
+      return [
+        runtime_status.get("aggregateSnapshot") or {},
+        runtime_status,
+        entity_status.get("aggregateSnapshot") or {},
+        entity_status,
+        entity.get("component") or {},
+      ]
+
+    def active_thread_count(entity, status=None):
+      for source in runtime_sources(entity, status):
         value = source.get("activeThreadCount")
         if isinstance(value, int):
           return value
         if isinstance(value, str) and value.isdigit():
           return int(value)
       return 0
+
+    def normalized_runtime_state(entity, status=None):
+      for source in runtime_sources(entity, status):
+        value = source.get("runStatus") or source.get("state") or source.get("physicalState")
+        if value:
+          return str(value).upper()
+      return ""
+
+    def processor_is_stopped_and_idle(entity):
+      status = processor_status(entity)
+      component = entity.get("component") or {}
+      component_state = str(component.get("state") or "").upper()
+      physical_state = str(component.get("physicalState") or component_state).upper()
+      runtime_state = normalized_runtime_state(entity, status)
+      active_threads = active_thread_count(entity, status)
+      running_states = {"RUNNING", "STARTING", "STOPPING"}
+      return (
+        component_state == "STOPPED"
+        and physical_state not in running_states
+        and runtime_state not in running_states
+        and active_threads == 0
+      )
 
     def processor_running_configuration_error(error):
       return "while the Processor is running" in str(error)
@@ -242,7 +280,8 @@ data:
     def configure_processor(entity, property_specs, auto_terminated=None, dynamic_property_specs=None, remove_dynamic_property_names=None):
       properties_to_remove = list(remove_dynamic_property_names or [])
       updated = None
-      for attempt in range(6):
+      for attempt in range(12):
+        entity = set_processor_state(entity, "STOPPED")
         entity = api("GET", f"/processors/{entity['id']}")
         config = entity["component"].get("config", {})
         descriptors = config.get("descriptors", {})
@@ -271,7 +310,7 @@ data:
           )
           break
         except RuntimeError as exc:
-          if not processor_running_configuration_error(exc) or attempt == 5:
+          if not processor_running_configuration_error(exc) or attempt == 11:
             raise
           set_processor_state(entity, "STOPPED")
           time.sleep(2 + attempt)
@@ -286,26 +325,37 @@ data:
       return updated
 
     def set_processor_state(entity, state):
-      entity = api("GET", f"/processors/{entity['id']}")
-      if entity["component"].get("state") == state and (state != "STOPPED" or active_thread_count(entity) == 0):
-        return entity
-      if entity["component"].get("state") != state:
-        api(
-          "PUT",
-          f"/processors/{entity['id']}/run-status",
-          {
-            "revision": revision(entity),
-            "state": state,
-            "disconnectedNodeAcknowledged": False,
-          },
-        )
+      last_error = None
+      transition_state = {"RUNNING": "STARTING", "STOPPED": "STOPPING"}.get(state)
       for _ in range(120):
         current = api("GET", f"/processors/{entity['id']}")
-        physical_state = current["component"].get("physicalState") or current["component"].get("state")
-        stopped_and_idle = state != "STOPPED" or active_thread_count(current) == 0
-        if current["component"].get("state") == state and physical_state == state and stopped_and_idle:
+        component = current["component"]
+        current_state = component.get("state")
+        physical_state = component.get("physicalState") or current_state
+        if state == "STOPPED" and processor_is_stopped_and_idle(current):
           return current
+        if state != "STOPPED" and current_state == state and physical_state == state:
+          return current
+        if physical_state == transition_state:
+          time.sleep(1)
+          continue
+        try:
+          api(
+            "PUT",
+            f"/processors/{entity['id']}/run-status",
+            {
+              "revision": revision(current),
+              "state": state,
+              "disconnectedNodeAcknowledged": False,
+            },
+          )
+        except RuntimeError as exc:
+          last_error = exc
+          if "HTTP 409" not in str(exc):
+            raise
         time.sleep(1)
+      if last_error:
+        raise last_error
       raise RuntimeError(f"Processor {entity['component']['name']} did not reach {state}.")
 
     def set_controller_service_state(entity, state):
