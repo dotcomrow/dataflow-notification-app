@@ -60,6 +60,20 @@ data:
         "version": entity["revision"]["version"],
       }
 
+    def active_thread_count(entity):
+      status = entity.get("status") or {}
+      aggregate = status.get("aggregateSnapshot") or {}
+      for source in (aggregate, status, entity.get("component") or {}):
+        value = source.get("activeThreadCount")
+        if isinstance(value, int):
+          return value
+        if isinstance(value, str) and value.isdigit():
+          return int(value)
+      return 0
+
+    def processor_running_configuration_error(error):
+      return "while the Processor is running" in str(error)
+
     def read_secret_file(directory, name):
       with open(os.path.join(directory, name), "r", encoding="utf-8") as secret_file:
         return secret_file.read().strip()
@@ -226,32 +240,43 @@ data:
       )
 
     def configure_processor(entity, property_specs, auto_terminated=None, dynamic_property_specs=None, remove_dynamic_property_names=None):
-      entity = api("GET", f"/processors/{entity['id']}")
-      config = entity["component"].get("config", {})
-      descriptors = config.get("descriptors", {})
-      properties = dict(config.get("properties") or {})
       properties_to_remove = list(remove_dynamic_property_names or [])
-      for candidates, value in property_specs:
-        properties[descriptor_key(descriptors, candidates)] = value
-      for name in properties_to_remove:
-        properties[name] = None
-      for name, value in dynamic_property_specs or []:
-        properties[name] = value
+      updated = None
+      for attempt in range(6):
+        entity = api("GET", f"/processors/{entity['id']}")
+        config = entity["component"].get("config", {})
+        descriptors = config.get("descriptors", {})
+        properties = dict(config.get("properties") or {})
+        for candidates, value in property_specs:
+          properties[descriptor_key(descriptors, candidates)] = value
+        for name in properties_to_remove:
+          properties[name] = None
+        for name, value in dynamic_property_specs or []:
+          properties[name] = value
 
-      new_config = {"properties": properties}
-      if auto_terminated is not None:
-        new_config["autoTerminatedRelationships"] = auto_terminated
-      updated = api(
-        "PUT",
-        f"/processors/{entity['id']}",
-        {
-          "revision": revision(entity),
-          "component": {
-            "id": entity["id"],
-            "config": new_config,
-          },
-        },
-      )
+        new_config = {"properties": properties}
+        if auto_terminated is not None:
+          new_config["autoTerminatedRelationships"] = auto_terminated
+        try:
+          updated = api(
+            "PUT",
+            f"/processors/{entity['id']}",
+            {
+              "revision": revision(entity),
+              "component": {
+                "id": entity["id"],
+                "config": new_config,
+              },
+            },
+          )
+          break
+        except RuntimeError as exc:
+          if not processor_running_configuration_error(exc) or attempt == 5:
+            raise
+          set_processor_state(entity, "STOPPED")
+          time.sleep(2 + attempt)
+      if updated is None:
+        raise RuntimeError(f"Processor {entity['component'].get('name', entity['id'])} was not configured.")
       if properties_to_remove:
         refreshed = api("GET", f"/processors/{entity['id']}")
         refreshed_properties = (refreshed["component"].get("config", {}) or {}).get("properties") or {}
@@ -262,21 +287,23 @@ data:
 
     def set_processor_state(entity, state):
       entity = api("GET", f"/processors/{entity['id']}")
-      if entity["component"].get("state") == state:
+      if entity["component"].get("state") == state and (state != "STOPPED" or active_thread_count(entity) == 0):
         return entity
-      api(
-        "PUT",
-        f"/processors/{entity['id']}/run-status",
-        {
-          "revision": revision(entity),
-          "state": state,
-          "disconnectedNodeAcknowledged": False,
-        },
-      )
-      for _ in range(60):
+      if entity["component"].get("state") != state:
+        api(
+          "PUT",
+          f"/processors/{entity['id']}/run-status",
+          {
+            "revision": revision(entity),
+            "state": state,
+            "disconnectedNodeAcknowledged": False,
+          },
+        )
+      for _ in range(120):
         current = api("GET", f"/processors/{entity['id']}")
         physical_state = current["component"].get("physicalState") or current["component"].get("state")
-        if current["component"].get("state") == state and physical_state == state:
+        stopped_and_idle = state != "STOPPED" or active_thread_count(current) == 0
+        if current["component"].get("state") == state and physical_state == state and stopped_and_idle:
           return current
         time.sleep(1)
       raise RuntimeError(f"Processor {entity['component']['name']} did not reach {state}.")
