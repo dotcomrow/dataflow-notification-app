@@ -225,13 +225,15 @@ data:
         },
       )
 
-    def configure_processor(entity, property_specs, auto_terminated=None, dynamic_property_specs=None):
+    def configure_processor(entity, property_specs, auto_terminated=None, dynamic_property_specs=None, remove_dynamic_property_names=None):
       entity = api("GET", f"/processors/{entity['id']}")
       config = entity["component"].get("config", {})
       descriptors = config.get("descriptors", {})
       properties = dict(config.get("properties") or {})
       for candidates, value in property_specs:
         properties[descriptor_key(descriptors, candidates)] = value
+      for name in remove_dynamic_property_names or []:
+        properties.pop(name, None)
       for name, value in dynamic_property_specs or []:
         properties[name] = value
 
@@ -295,7 +297,38 @@ data:
       for connection in list_connections(process_group_id):
         component = connection.get("component", {})
         if component.get("name") == name:
-          return connection
+          current_source = component.get("source") or {}
+          current_destination = component.get("destination") or {}
+          current_relationships = sorted(component.get("selectedRelationships") or [])
+          if (
+            current_source.get("id") == source_id
+            and current_destination.get("id") == destination_id
+            and current_relationships == sorted(relationships)
+          ):
+            return connection
+          connection = api("GET", f"/connections/{connection['id']}")
+          return api(
+            "PUT",
+            f"/connections/{connection['id']}",
+            {
+              "revision": revision(connection),
+              "component": {
+                "id": connection["id"],
+                "name": name,
+                "source": {
+                  "id": source_id,
+                  "groupId": process_group_id,
+                  "type": "PROCESSOR",
+                },
+                "destination": {
+                  "id": destination_id,
+                  "groupId": process_group_id,
+                  "type": "PROCESSOR",
+                },
+                "selectedRelationships": relationships,
+              },
+            },
+          )
       return api(
         "POST",
         f"/process-groups/{process_group_id}/connections",
@@ -328,22 +361,23 @@ data:
       kafka_service = ensure_controller_service(process_group_id)
       consume = ensure_processor(process_group_id, "consume-platform-notification-requests", "org.apache.nifi.kafka.processors.ConsumeKafka", "nifi-kafka-nar", 0, 0)
       extract_metadata = ensure_processor(process_group_id, "extract-platform-notification-metadata", "org.apache.nifi.processors.standard.EvaluateJsonPath", "nifi-standard-nar", 300, 0)
-      set_auth = ensure_processor(process_group_id, "set-platform-notification-authorization", "org.apache.nifi.processors.attributes.UpdateAttribute", "nifi-update-attribute-nar", 600, 0)
-      build_processing = ensure_processor(process_group_id, "build-platform-notification-processing-callback", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 900, 0)
-      mark_processing = ensure_processor(process_group_id, "mark-platform-notification-processing", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 1200, 0)
-      resolve_rules = ensure_processor(process_group_id, "resolve-platform-notification-rules", "org.apache.nifi.processors.attributes.UpdateAttribute", "nifi-update-attribute-nar", 1500, 0)
-      render_message = ensure_processor(process_group_id, "render-platform-notification-message", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 1800, 0)
-      invoke_delivery = ensure_processor(process_group_id, "invoke-platform-notification-delivery", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 2100, 0)
-      build_attempt = ensure_processor(process_group_id, "build-platform-notification-delivery-attempt", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 2400, 0)
-      record_attempt = ensure_processor(process_group_id, "record-platform-notification-delivery-attempt", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 2700, 0)
-      build_success = ensure_processor(process_group_id, "build-platform-notification-success-callback", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 3000, 0)
-      finish_sent = ensure_processor(process_group_id, "finish-platform-notification-sent", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 3300, 0)
+      extract_recipient = ensure_processor(process_group_id, "extract-platform-notification-recipient-json", "org.apache.nifi.processors.standard.EvaluateJsonPath", "nifi-standard-nar", 600, 0)
+      set_auth = ensure_processor(process_group_id, "set-platform-notification-authorization", "org.apache.nifi.processors.attributes.UpdateAttribute", "nifi-update-attribute-nar", 900, 0)
+      build_processing = ensure_processor(process_group_id, "build-platform-notification-processing-callback", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 1200, 0)
+      mark_processing = ensure_processor(process_group_id, "mark-platform-notification-processing", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 1500, 0)
+      resolve_rules = ensure_processor(process_group_id, "resolve-platform-notification-rules", "org.apache.nifi.processors.attributes.UpdateAttribute", "nifi-update-attribute-nar", 1800, 0)
+      render_message = ensure_processor(process_group_id, "render-platform-notification-message", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 2100, 0)
+      invoke_delivery = ensure_processor(process_group_id, "invoke-platform-notification-delivery", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 2400, 0)
+      build_attempt = ensure_processor(process_group_id, "build-platform-notification-delivery-attempt", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 2700, 0)
+      record_attempt = ensure_processor(process_group_id, "record-platform-notification-delivery-attempt", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 3000, 0)
+      build_success = ensure_processor(process_group_id, "build-platform-notification-success-callback", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 3300, 0)
+      finish_sent = ensure_processor(process_group_id, "finish-platform-notification-sent", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 3600, 0)
       build_failure = ensure_processor(process_group_id, "build-platform-notification-failure-callback", "org.apache.nifi.processors.standard.ReplaceText", "nifi-standard-nar", 2100, 360)
       finish_failed = ensure_processor(process_group_id, "finish-platform-notification-failed", "org.apache.nifi.processors.standard.InvokeHTTP", "nifi-standard-nar", 2400, 360)
       dlq = ensure_processor(process_group_id, "publish-platform-notification-dlq", "org.apache.nifi.kafka.processors.PublishKafka", "nifi-kafka-nar", 2700, 360)
 
       processors = [
-        consume, extract_metadata, set_auth, build_processing, mark_processing,
+        consume, extract_metadata, extract_recipient, set_auth, build_processing, mark_processing,
         resolve_rules, render_message, invoke_delivery, build_attempt, record_attempt,
         build_success, finish_sent, build_failure, finish_failed, dlq,
       ]
@@ -396,6 +430,19 @@ data:
           ("platform.template_key", "$.template_key"),
           ("platform.correlation_id", "$.correlation_id"),
           ("platform.requested_channel", "$.channels[0]"),
+        ],
+        ["platform.requested_recipient_json"],
+      )
+      extract_recipient = configure_processor(
+        extract_recipient,
+        [
+          (["Destination"], "flowfile-attribute"),
+          (["Return Type"], "json"),
+          (["Path Not Found Behavior"], "ignore"),
+          (["Null Value Representation"], "empty string"),
+        ],
+        None,
+        [
           ("platform.requested_recipient_json", "$.recipients[0]"),
         ],
       )
@@ -544,8 +591,10 @@ data:
       )
 
       ensure_connection(process_group_id, "notification-consume-to-extract", consume["id"], extract_metadata["id"], ["success"])
-      ensure_connection(process_group_id, "notification-extract-to-auth", extract_metadata["id"], set_auth["id"], ["matched"])
+      ensure_connection(process_group_id, "notification-extract-to-auth", extract_metadata["id"], extract_recipient["id"], ["matched"])
       ensure_connection(process_group_id, "notification-extract-failure-to-dlq", extract_metadata["id"], dlq["id"], ["failure", "unmatched"])
+      ensure_connection(process_group_id, "notification-recipient-to-auth", extract_recipient["id"], set_auth["id"], ["matched"])
+      ensure_connection(process_group_id, "notification-recipient-failure-to-dlq", extract_recipient["id"], dlq["id"], ["failure", "unmatched"])
       ensure_connection(process_group_id, "notification-auth-to-processing-body", set_auth["id"], build_processing["id"], ["success"])
       ensure_connection(process_group_id, "notification-processing-body-to-status", build_processing["id"], mark_processing["id"], ["success"])
       ensure_connection(process_group_id, "notification-processing-body-failure-to-failure-body", build_processing["id"], build_failure["id"], ["failure"])
@@ -583,6 +632,7 @@ data:
           mark_processing,
           build_processing,
           set_auth,
+          extract_recipient,
           extract_metadata,
           consume,
         ]

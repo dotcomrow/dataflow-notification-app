@@ -74,6 +74,11 @@ data:
           "relationships": ["matched", "unmatched", "failure"]
         },
         {
+          "name": "extract-platform-notification-recipient-json",
+          "type": "org.apache.nifi.processors.standard.EvaluateJsonPath",
+          "relationships": ["matched", "unmatched", "failure"]
+        },
+        {
           "name": "set-platform-notification-authorization",
           "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
           "relationships": ["success"]
