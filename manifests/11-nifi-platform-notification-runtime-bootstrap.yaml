@@ -531,6 +531,8 @@ data:
         None,
         [
           ("platform.requested_recipient_json", "$.recipients[0]"),
+          ("platform.rendered_message_json", "$.message"),
+          ("platform.rendered_message_options_json", "$.message.options"),
         ],
       )
       set_auth = configure_processor(
@@ -581,7 +583,7 @@ data:
           (["Replacement Strategy"], "Always Replace"),
           (
             ["Replacement Value"],
-            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient\":${platform.delivery_recipient_json},\"message\":{\"title\":\"${platform.subject:escapeJson()}\",\"body\":\"${platform.body:escapeJson()}\",\"data\":{\"notification_request_id\":\"${platform.notification_request_id:escapeJson()}\",\"event_key\":\"${platform.event_key:escapeJson()}\",\"severity\":\"${platform.severity:escapeJson()}\",\"priority\":\"${platform.priority:escapeJson()}\",\"app_id\":\"${platform.app_id:escapeJson()}\"}},\"options\":{\"tag\":\"platform-notification-${platform.notification_request_id:escapeJson()}\",\"ttl_seconds\":3600,\"urgency\":\"normal\"},\"metadata\":{\"source\":\"nifi-platform-notification-flow\",\"correlation_id\":\"${platform.correlation_id:escapeJson()}\",\"event_key\":\"${platform.event_key:escapeJson()}\"}}",
+            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient\":${platform.delivery_recipient_json},\"message\":${platform.rendered_message_json},\"options\":${platform.rendered_message_options_json},\"metadata\":{\"source\":\"nifi-platform-notification-flow\",\"correlation_id\":\"${platform.correlation_id:escapeJson()}\",\"event_key\":\"${platform.event_key:escapeJson()}\",\"notification_key\":\"${platform.template_key:escapeJson()}\"}}",
           ),
           (["Evaluation Mode"], "Entire text"),
         ],
@@ -638,7 +640,7 @@ data:
           (["Replacement Strategy"], "Always Replace"),
           (
             ["Replacement Value"],
-            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient_json\":${platform.delivery_recipient_json},\"message_json\":{\"title\":\"${platform.subject:escapeJson()}\",\"body\":\"${platform.body:escapeJson()}\"},\"status\":\"${platform.executor_attempt_status:escapeJson()}\",\"provider_message_id\":\"${platform.executor_provider_message_id:escapeJson()}\",\"response_json\":{\"executor_http_status_code\":\"${platform.executor_http_status_code:escapeJson()}\",\"executor_ok\":\"${platform.executor_ok:escapeJson()}\",\"executor_response\":${platform.executor_response_payload_json}},\"error_message\":\"${platform.executor_error_message:escapeJson()}\"}",
+            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient_json\":${platform.delivery_recipient_json},\"message_json\":${platform.rendered_message_json},\"status\":\"${platform.executor_attempt_status:escapeJson()}\",\"provider_message_id\":\"${platform.executor_provider_message_id:escapeJson()}\",\"response_json\":{\"executor_http_status_code\":\"${platform.executor_http_status_code:escapeJson()}\",\"executor_ok\":\"${platform.executor_ok:escapeJson()}\",\"executor_response\":${platform.executor_response_payload_json}},\"error_message\":\"${platform.executor_error_message:escapeJson()}\"}",
           ),
           (["Evaluation Mode"], "Entire text"),
         ],
