@@ -542,8 +542,8 @@ data:
         [
           ("Authorization", f"Bearer {read_flow_secret('platform_notification_service_token')}"),
           ("platform.notification_execution_enabled", "true" if EXECUTION_ENABLED else "false"),
-          ("platform.delivery_channel", "browser_push"),
-          ("platform.delivery_provider_key", "web-push:browser_push"),
+          ("platform.delivery_channel", "${platform.requested_channel:replaceEmpty('browser_push')}"),
+          ("platform.delivery_provider_key", "${platform.requested_channel:replaceEmpty('browser_push'):replace('browser_push','web-push:browser_push'):replace('email','smtp:default')}"),
           ("platform.delivery_recipient_json", "${platform.requested_recipient_json}"),
         ],
       )
@@ -617,6 +617,10 @@ data:
           ("platform.executor_response_provider", "$.response_json.provider"),
           ("platform.executor_response_subscription_id", "$.response_json.subscription_id"),
           ("platform.executor_response_endpoint_hash", "$.response_json.endpoint_hash"),
+          ("platform.executor_response_to_hash", "$.response_json.to_hash"),
+          ("platform.executor_response_to_domain", "$.response_json.to_domain"),
+          ("platform.executor_response_accepted_count", "$.response_json.accepted_count"),
+          ("platform.executor_response_rejected_count", "$.response_json.rejected_count"),
           ("platform.executor_response_status_code", "$.response_json.status_code"),
           ("platform.executor_response_mode", "$.response_json.mode"),
           ("platform.executor_error_message", "$.error_message"),
@@ -631,7 +635,7 @@ data:
           ("platform.executor_http_status_code", "${invokehttp.status.code}"),
           ("platform.executor_attempt_status", "${platform.executor_status:replaceEmpty('failed')}"),
           ("platform.notification_terminal_status", "${platform.executor_status:equals('sent'):ifElse('sent','failed')}"),
-          ("platform.executor_response_payload_json", "{\"provider\":\"${platform.executor_response_provider:escapeJson()}\",\"subscription_id\":\"${platform.executor_response_subscription_id:escapeJson()}\",\"endpoint_hash\":\"${platform.executor_response_endpoint_hash:escapeJson()}\",\"status_code\":\"${platform.executor_response_status_code:escapeJson()}\",\"mode\":\"${platform.executor_response_mode:escapeJson()}\"}"),
+          ("platform.executor_response_payload_json", "{\"provider\":\"${platform.executor_response_provider:escapeJson()}\",\"subscription_id\":\"${platform.executor_response_subscription_id:escapeJson()}\",\"endpoint_hash\":\"${platform.executor_response_endpoint_hash:escapeJson()}\",\"to_hash\":\"${platform.executor_response_to_hash:escapeJson()}\",\"to_domain\":\"${platform.executor_response_to_domain:escapeJson()}\",\"accepted_count\":\"${platform.executor_response_accepted_count:escapeJson()}\",\"rejected_count\":\"${platform.executor_response_rejected_count:escapeJson()}\",\"status_code\":\"${platform.executor_response_status_code:escapeJson()}\",\"mode\":\"${platform.executor_response_mode:escapeJson()}\"}"),
         ],
       )
       build_attempt = configure_processor(
