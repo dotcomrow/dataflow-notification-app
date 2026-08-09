@@ -583,7 +583,7 @@ data:
           (["Replacement Strategy"], "Always Replace"),
           (
             ["Replacement Value"],
-            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient\":${platform.delivery_recipient_json},\"message\":${platform.rendered_message_json},\"options\":${platform.rendered_message_options_json},\"metadata\":{\"source\":\"nifi-platform-notification-flow\",\"correlation_id\":\"${platform.correlation_id:escapeJson()}\",\"event_key\":\"${platform.event_key:escapeJson()}\",\"notification_key\":\"${platform.template_key:escapeJson()}\"}}",
+            "{\"channel\":\"${platform.delivery_channel:escapeJson()}\",\"provider_key\":\"${platform.delivery_provider_key:escapeJson()}\",\"recipient\":${platform.delivery_recipient_json},\"message\":${platform.rendered_message_json},\"options\":${platform.rendered_message_options_json:replaceEmpty('{}')},\"metadata\":{\"source\":\"nifi-platform-notification-flow\",\"correlation_id\":\"${platform.correlation_id:escapeJson()}\",\"event_key\":\"${platform.event_key:escapeJson()}\",\"notification_key\":\"${platform.template_key:escapeJson()}\"}}",
           ),
           (["Evaluation Mode"], "Entire text"),
         ],
