@@ -13,10 +13,14 @@ Flow ownership:
 7. Mark the request as `sent`, `partially_sent`, or `failed`.
 8. Route orchestration failures to `platform.notifications.requested.dlq.v1`.
 
-The first implementation creates the process group, Kafka connection, core
-callbacks, and a dry-run executor call. Rules/template resolution processors are
-present as named placeholders so they can be replaced with concrete service calls
-without changing the intake or delivery contract.
+The complete production flow is stored in Git as a NiFi Registry snapshot.
+Argo bootstraps that exact snapshot into NiFi Registry and a `NifiDataflow`
+resource pins version `1` with `syncMode: always`. NiFiKop continuously restores
+the Git-managed version if the live process group drifts.
+
+The NiFi GUI is intentionally read-only for the human OIDC group. Flow changes
+must be made by updating the snapshot and version in Git; the
+certificate-authenticated NiFi operator is the only flow writer.
 
 Required Vault values before first production sync:
 
@@ -25,7 +29,8 @@ Required Vault values before first production sync:
 - `secret/data/kafka-admin-password#value`
 - `secret/data/kafka-nifi-username#value`
 - `secret/data/kafka-nifi-password#value`
-- `secret/data/platform-notification-service#token`
+- `secret/data/platform-notification-service#token` (injected into the NiFi
+  runtime by the `k8s-kafka` manifests; it is never stored in the flow snapshot)
 
 Default topics:
 

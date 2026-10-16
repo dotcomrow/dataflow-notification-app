@@ -32,17 +32,6 @@ stringData:
   nifi_username: "<path:secret/data/kafka-nifi-username#value>"
   nifi_password: "<path:secret/data/kafka-nifi-password#value>"
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: platform-notification-flow-secrets
-  namespace: dataflow
-  annotations:
-    argocd.argoproj.io/sync-wave: "50"
-type: Opaque
-stringData:
-  platform_notification_service_token: "<path:secret/data/platform-notification-service#token>"
----
 apiVersion: batch/v1
 kind: Job
 metadata:
