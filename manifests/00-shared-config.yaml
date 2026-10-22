@@ -14,6 +14,8 @@ data:
   request_topic: "platform.notifications.requested.v1"
   dlq_topic: "platform.notifications.requested.dlq.v1"
   consumer_group: "nifi-platform-notifications-requested-v1"
+  email_validation_event_topic: "crm.email-validation.events.v1"
+  email_validation_consumer_group: "platform-notification-email-validation-v1"
   platform_notification_service_url: "http://platform-notification-service.directus.svc.cluster.local:8080"
   platform_notification_executor_url: "http://platform-notification-executor.directus.svc.cluster.local:8080"
   execution_enabled: "true"
@@ -112,6 +114,16 @@ spec:
                 configMapKeyRef:
                   name: platform-notification-flow-config
                   key: consumer_group
+            - name: CRM_EMAIL_VALIDATION_EVENT_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-notification-flow-config
+                  key: email_validation_event_topic
+            - name: CRM_EMAIL_VALIDATION_CONSUMER_GROUP
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-notification-flow-config
+                  key: email_validation_consumer_group
           command: ["/bin/bash", "-lc"]
           args:
             - |
@@ -197,6 +209,14 @@ spec:
                 --operation Read \
                 --operation Describe
               add_acl "${KAFKA_NIFI_USERNAME}" \
+                --topic "${CRM_EMAIL_VALIDATION_EVENT_TOPIC}" \
+                --operation Read \
+                --operation Describe
+              add_acl "${KAFKA_NIFI_USERNAME}" \
+                --group "${CRM_EMAIL_VALIDATION_CONSUMER_GROUP}" \
+                --operation Read \
+                --operation Describe
+              add_acl "${KAFKA_NIFI_USERNAME}" \
                 --cluster \
                 --operation Describe
 
@@ -216,6 +236,14 @@ spec:
                 --group "${PLATFORM_NOTIFICATION_CONSUMER_GROUP}"
               require_acl "${KAFKA_NIFI_USERNAME}" DESCRIBE \
                 --group "${PLATFORM_NOTIFICATION_CONSUMER_GROUP}"
+              require_acl "${KAFKA_NIFI_USERNAME}" READ \
+                --topic "${CRM_EMAIL_VALIDATION_EVENT_TOPIC}"
+              require_acl "${KAFKA_NIFI_USERNAME}" DESCRIBE \
+                --topic "${CRM_EMAIL_VALIDATION_EVENT_TOPIC}"
+              require_acl "${KAFKA_NIFI_USERNAME}" READ \
+                --group "${CRM_EMAIL_VALIDATION_CONSUMER_GROUP}"
+              require_acl "${KAFKA_NIFI_USERNAME}" DESCRIBE \
+                --group "${CRM_EMAIL_VALIDATION_CONSUMER_GROUP}"
               require_acl "${KAFKA_NIFI_USERNAME}" DESCRIBE \
                 --cluster
 
